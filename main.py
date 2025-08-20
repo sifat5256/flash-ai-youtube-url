@@ -16,20 +16,11 @@ openai_api_key = os.environ.get("OPENAI_API_KEY")
 proxy_username = os.environ.get("PROXY_USERNAME", "ibgvbyfk")
 proxy_password = os.environ.get("PROXY_PASSWORD", "lktesui61d4c")
 
-# Initialize OpenAI client (new style)
+# Initialize OpenAI client
 client = OpenAI(api_key=openai_api_key) if openai_api_key else None
-
 
 # Retry helper
 def retry(func, retries=3, delay=2, backoff=2, exceptions=(Exception,), *args, **kwargs):
-    """
-    Retry a function with exponential backoff.
-    :param func: function to call
-    :param retries: number of retries
-    :param delay: initial delay in seconds
-    :param backoff: multiplier for delay
-    :param exceptions: exceptions to catch
-    """
     attempt = 0
     while attempt < retries:
         try:
@@ -41,7 +32,6 @@ def retry(func, retries=3, delay=2, backoff=2, exceptions=(Exception,), *args, *
             wait_time = delay * (backoff ** (attempt - 1))
             print(f"⚠️ Attempt {attempt} failed: {e}. Retrying in {wait_time} sec...")
             time.sleep(wait_time)
-
 
 # Function to extract YouTube video ID
 def get_video_id(url):
@@ -55,7 +45,6 @@ def get_video_id(url):
         if match:
             return match.group(1)
     return None
-
 
 # Split long transcript into chunks
 def chunk_text(text, max_chunk_size=3000):
@@ -81,7 +70,6 @@ def chunk_text(text, max_chunk_size=3000):
 @app.route('/generate_qa', methods=['POST'])
 def generate_qa():
     try:
-        # Check if OpenAI client is available
         if not client:
             return jsonify({'error': 'OpenAI API key not configured'}), 500
 
@@ -129,23 +117,25 @@ def generate_qa():
         chunks = chunk_text(full_text)
         text_to_process = chunks[0]
 
-        # Prompt to OpenAI
-        prompt = f"""Based on the following transcript, generate exactly {count} educational question-answer pairs in JSON format.
+        # --- Improved Prompt for Best Questions ---
+        prompt = f"""Based on the following transcript, generate exactly {count} **high-quality educational question-answer pairs** in JSON format.
 
-                    Requirements:
-                    • Return ONLY a valid JSON array
-                    • Each question should be clear and educational
-                    • Each answer should be concise but complete
-                    • Focus on key concepts and important information
+Requirements:
+• Each question should be thought-provoking, testing understanding, not just memorization.
+• Include conceptual, analytical, and application-based questions wherever possible.
+• Answers should be concise, accurate, and complete.
+• Avoid overly simple or yes/no questions.
+• Focus on key concepts, insights, and important details from the transcript.
+• Use proper educational language appropriate for high school or college learners.
 
-                    Format:
-                    [
-                    {{"question": "What is...?", "answer": "The answer is..."}},
-                    {{"question": "How does...?", "answer": "It works by..."}}
-                    ]
+Format:
+[
+{{"question": "What is...?", "answer": "The answer is..."}},
+{{"question": "How does...?", "answer": "It works by..."}}
+]
 
-                    Transcript:
-                    {text_to_process}"""
+Transcript:
+{text_to_process}"""
 
         # --- OpenAI call with retries ---
         def call_openai():
@@ -177,7 +167,6 @@ def generate_qa():
 
     except Exception as e:
         return jsonify({'error': f"Server error: {str(e)}"}), 500
-
 
 @app.route('/', methods=['GET'])
 def health_check():
