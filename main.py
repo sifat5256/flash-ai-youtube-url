@@ -16,20 +16,12 @@ openai_api_key = os.environ.get("OPENAI_API_KEY")
 proxy_username = os.environ.get("PROXY_USERNAME", "ibgvbyfk")
 proxy_password = os.environ.get("PROXY_PASSWORD", "lktesui61d4c")
 
-# Initialize OpenAI client (new style)
+# Initialize OpenAI client
 client = OpenAI(api_key=openai_api_key) if openai_api_key else None
 
 
 # Retry helper
 def retry(func, retries=3, delay=2, backoff=2, exceptions=(Exception,), *args, **kwargs):
-    """
-    Retry a function with exponential backoff.
-    :param func: function to call
-    :param retries: number of retries
-    :param delay: initial delay in seconds
-    :param backoff: multiplier for delay
-    :param exceptions: exceptions to catch
-    """
     attempt = 0
     while attempt < retries:
         try:
@@ -43,7 +35,7 @@ def retry(func, retries=3, delay=2, backoff=2, exceptions=(Exception,), *args, *
             time.sleep(wait_time)
 
 
-# Function to extract YouTube video ID
+# Extract YouTube video ID
 def get_video_id(url):
     patterns = [
         r"(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})",
@@ -57,7 +49,7 @@ def get_video_id(url):
     return None
 
 
-# Split long transcript into chunks
+# Split transcript into chunks
 def chunk_text(text, max_chunk_size=3000):
     words = text.split()
     chunks = []
@@ -78,10 +70,10 @@ def chunk_text(text, max_chunk_size=3000):
 
     return chunks
 
+
 @app.route('/generate_qa', methods=['POST'])
 def generate_qa():
     try:
-        # Check if OpenAI client is available
         if not client:
             return jsonify({'error': 'OpenAI API key not configured'}), 500
 
@@ -113,7 +105,6 @@ def generate_qa():
                 )
             else:
                 ytt = YouTubeTranscriptApi()
-
             return ytt.fetch(video_id, languages=['en', 'bn', 'hi'])
 
         try:
@@ -127,32 +118,39 @@ def generate_qa():
             return jsonify({'error': 'Transcript too short to generate meaningful questions'}), 400
 
         chunks = chunk_text(full_text)
-        text_to_process = chunks[0]
+        text_to_process = chunks[0]  # take first chunk only
 
-        # Prompt to OpenAI
+        # Prompt to OpenAI with difficulty levels
         prompt = f"""Based on the following transcript, generate exactly {count} educational question-answer pairs in JSON format.
 
-                    Requirements:
-                    • Return ONLY a valid JSON array
-                    • Each question should be clear and educational
-                    • Each answer should be concise but complete
-                    • Focus on key concepts and important information
+Requirements:
+• Return ONLY a valid JSON array
+• Each item must include: "question", "answer", "difficulty"
+• "difficulty" must be one of: "simple", "medium", "hard"
+• Mix difficulty levels: ~40% simple, 40% medium, 20% hard
+• Question style must vary:
+   - Simple → direct factual (What/Who/When…)
+   - Medium → reasoning/explanatory (How/Why/Compare…)
+   - Hard → analytical/predictive (What would happen if…/Evaluate/Apply…)
+• Each answer should be concise but complete
+• Focus only on key concepts from the transcript
 
-                    Format:
-                    [
-                    {{"question": "What is...?", "answer": "The answer is..."}},
-                    {{"question": "How does...?", "answer": "It works by..."}}
-                    ]
+Example format:
+[
+  {{"question": "What is ...?", "answer": "It is ...", "difficulty": "simple"}},
+  {{"question": "How does ...?", "answer": "It works by ...", "difficulty": "medium"}},
+  {{"question": "What would happen if ...?", "answer": "If this happens, then ...", "difficulty": "hard"}}
+]
 
-                    Transcript:
-                    {text_to_process}"""
+Transcript:
+{text_to_process}"""
 
         # --- OpenAI call with retries ---
         def call_openai():
             return client.chat.completions.create(
                 model="gpt-3.5-turbo",
                 messages=[
-                    {"role": "system", "content": "You are an educational content generator. Always return valid JSON arrays only."},
+                    {"role": "system", "content": "You are an educational content generator. Always return only a valid JSON array."},
                     {"role": "user", "content": prompt}
                 ],
                 max_tokens=2000,
@@ -169,7 +167,17 @@ def generate_qa():
         try:
             json_result = json.loads(result)
             if isinstance(json_result, list):
-                return jsonify({'result': result, 'count': len(json_result)})
+                # Count by difficulty
+                difficulty_counts = {
+                    "simple": sum(1 for q in json_result if q.get("difficulty") == "simple"),
+                    "medium": sum(1 for q in json_result if q.get("difficulty") == "medium"),
+                    "hard": sum(1 for q in json_result if q.get("difficulty") == "hard"),
+                }
+                return jsonify({
+                    'result': json_result,
+                    'total': len(json_result),
+                    'difficulty_counts': difficulty_counts
+                })
             else:
                 return jsonify({'error': 'Invalid response format from AI'}), 500
         except json.JSONDecodeError:
@@ -188,13 +196,14 @@ def health_check():
         'environment': os.environ.get('FLASK_ENV', 'production')
     })
 
-if __name__ == '__main__': 
+
+if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5500))
     debug_mode = os.environ.get('FLASK_ENV') == 'development'
 
     if not openai_api_key:
         print("⚠️ Warning: OPENAI_API_KEY not set!")
-    
+
     if not proxy_username or not proxy_password:
         print("⚠️ Warning: Proxy credentials not set, using default values!")
 
