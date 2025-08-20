@@ -16,20 +16,12 @@ openai_api_key = os.environ.get("OPENAI_API_KEY")
 proxy_username = os.environ.get("PROXY_USERNAME", "ibgvbyfk")
 proxy_password = os.environ.get("PROXY_PASSWORD", "lktesui61d4c")
 
-# Initialize OpenAI client (new style)
+# Initialize OpenAI client
 client = OpenAI(api_key=openai_api_key) if openai_api_key else None
 
 
-# Retry helper
+# Retry helper function
 def retry(func, retries=3, delay=2, backoff=2, exceptions=(Exception,), *args, **kwargs):
-    """
-    Retry a function with exponential backoff.
-    :param func: function to call
-    :param retries: number of retries
-    :param delay: initial delay in seconds
-    :param backoff: multiplier for delay
-    :param exceptions: exceptions to catch
-    """
     attempt = 0
     while attempt < retries:
         try:
@@ -43,7 +35,7 @@ def retry(func, retries=3, delay=2, backoff=2, exceptions=(Exception,), *args, *
             time.sleep(wait_time)
 
 
-# Function to extract YouTube video ID
+# Extract YouTube video ID
 def get_video_id(url):
     patterns = [
         r"(?:v=|youtu\.be/)([a-zA-Z0-9_-]{11})",
@@ -78,10 +70,10 @@ def chunk_text(text, max_chunk_size=3000):
 
     return chunks
 
+
 @app.route('/generate_qa', methods=['POST'])
 def generate_qa():
     try:
-        # Check if OpenAI client is available
         if not client:
             return jsonify({'error': 'OpenAI API key not configured'}), 500
 
@@ -102,7 +94,7 @@ def generate_qa():
         if not video_id:
             return jsonify({'error': 'Invalid YouTube URL format'}), 400
 
-        # --- Transcript fetch with retries ---
+        # Fetch transcript with retries
         def fetch_transcript():
             if proxy_username and proxy_password:
                 ytt = YouTubeTranscriptApi(
@@ -121,7 +113,8 @@ def generate_qa():
         except Exception as e:
             return jsonify({'error': f"Could not fetch transcript after retries: {str(e)}"}), 500
 
-        full_text = " ".join([entry.text for entry in transcript])
+        full_text = " ".join([entry['text'] for entry in transcript])
+        language_code = transcript[0].get('language', 'en')  # Detect transcript language
 
         if len(full_text.strip()) < 100:
             return jsonify({'error': 'Transcript too short to generate meaningful questions'}), 400
@@ -129,25 +122,25 @@ def generate_qa():
         chunks = chunk_text(full_text)
         text_to_process = chunks[0]
 
-        # Prompt to OpenAI
-        prompt = f"""Based on the following transcript, generate exactly {count} educational question-answer pairs in JSON format.
+        # Updated prompt to keep same language
+        prompt = f"""Based on the following transcript (in {language_code}), generate exactly {count} educational question-answer pairs in the SAME LANGUAGE as the transcript.
 
-                    Requirements:
-                    • Return ONLY a valid JSON array
-                    • Each question should be clear and educational
-                    • Each answer should be concise but complete
-                    • Focus on key concepts and important information
+Requirements:
+• Return ONLY a valid JSON array
+• Each question should be clear and educational
+• Each answer should be concise but complete
+• Do NOT translate, keep original language
 
-                    Format:
-                    [
-                    {{"question": "What is...?", "answer": "The answer is..."}},
-                    {{"question": "How does...?", "answer": "It works by..."}}
-                    ]
+Format:
+[
+{{"question": "What is...?", "answer": "The answer is..."}},
+{{"question": "How does...?", "answer": "It works by..."}}
+]
 
-                    Transcript:
-                    {text_to_process}"""
+Transcript:
+{text_to_process}"""
 
-        # --- OpenAI call with retries ---
+        # OpenAI call with retries
         def call_openai():
             return client.chat.completions.create(
                 model="gpt-3.5-turbo",
@@ -169,7 +162,7 @@ def generate_qa():
         try:
             json_result = json.loads(result)
             if isinstance(json_result, list):
-                return jsonify({'result': result, 'count': len(json_result)})
+                return jsonify({'result': result, 'count': len(json_result), 'language': language_code})
             else:
                 return jsonify({'error': 'Invalid response format from AI'}), 500
         except json.JSONDecodeError:
@@ -187,6 +180,7 @@ def health_check():
         'proxy_configured': bool(proxy_username and proxy_password),
         'environment': os.environ.get('FLASK_ENV', 'production')
     })
+
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5500))
